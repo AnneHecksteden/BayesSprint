@@ -1,0 +1,844 @@
+---
+title: "Dwarfs on the shoulders of giants: Bayesian analysis with informative priors in elite sports research and decision making"
+author: "Anne Hecksteden"
+date: "23 Dezember 2021"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+    toc_depth: 3
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.align = "center", echo = TRUE)
+library(tidyr)
+library(dplyr)
+library(knitr)
+library(lme4)
+library(lmerTest)
+library(rstan)
+library(plotly)
+
+```
+
+## Read Me 
+
+This is an R Markdown document which provides reproducible code for the analyses and figures presented in the above manuscript. 
+
+When you click the **Knit** button an html document will be generated that includes both content as well as the embedded R code chunks. Importantly, all required files have to be in the same folder as this document. This will always concern the data file. Moreover the stan files (if simulations are to be run on your system) or the rds-files (if the provided fit-objects for the Bayesian analyses are to be loaded) are required. 
+
+Code chunks can also be run individually. However, please note that later chunks may depend on objects generated before. 
+
+## Loading the dataset
+
+Times and their differences are in seconds.
+
+Abbreviations: Code = code for condition, Rep = replication, FivePre = time for initial 5m in pre-tests, FivePost = time for initial 5m in post-tests, ThirtyPre = time for full 30m linear print in pre-tests, ThirtyPost = time for full 30m linear sprint in post-tests, Diff_5_Sec = pre-post difference for inital 5m times, Diff_30_Sec = pre-post difference for full 30m linear sprint
+
+```{r data, eval=TRUE, echo=FALSE}
+load("Sprint.RData")
+data <- Sprint
+kable(data, caption = "rmd-table 1: Raw data", digits = 3, align = "c")
+
+```
+# Basic descriptive statistics
+## Baseline performance
+
+Observed sprint performances at baseline followed expectations for players in the highest German amateur soccer league. Results are summarized below in rmd-table 1.
+
+Abbreviations: FivePre = sprint time for initial 5m in pre-tests, ThirtyPre = time for full 30m linear sprint in post-tests, SD = standard deviation"
+
+```{r Baseline, eval = TRUE, echo=FALSE}
+descriptives_baseline <- summarize(data, FivePre_mean = mean(FivePre), FivePre_SD = sd(FivePre), ThirtyPre_mean = mean(ThirtyPre), ThirtyPre_SD = sd(ThirtyPre))
+descriptives_baseline$Condition <- "Overall"
+
+descriptives_baseline_group <- data %>% group_by(Condition) %>% summarize(FivePre_mean = mean(FivePre), FivePre_SD = sd(FivePre), ThirtyPre_mean = mean(ThirtyPre), ThirtyPre_SD = sd(ThirtyPre))
+descriptives_baseline_all <- rbind(descriptives_baseline, descriptives_baseline_group)
+
+kable(descriptives_baseline_all, caption = "rmd-table 2: Baseline sprint performance [sec]", digits = 3, align = "c")
+```
+
+
+## Pre-post changes in sprint performance
+
+Basic descriptives for pre-post changes in sprint performance are summarized in rmd-table 2. Please note: performances are given as times, therefore lower values indicate higher performance. 
+
+```{r Changes, eval = TRUE, echo=FALSE}
+descriptives_D <- data %>% summarize(PrePost_5_mean = mean(Diff_5_Sec), PrePost_5_SD = sd(Diff_5_Sec), PrePost_30_mean = mean(Diff_30_Sec), PrePost_30_SD = sd(Diff_30_Sec))
+descriptives_D$Condition <- "Overall"
+
+descriptives_D_group <- data %>% group_by(Condition) %>% summarize(PrePost_5_mean = mean(Diff_5_Sec), PrePost_5_SD = sd(Diff_5_Sec), PrePost_30_mean = mean(Diff_30_Sec), PrePost_30_SD = sd(Diff_30_Sec))
+descriptives_D_all <- rbind(descriptives_D, descriptives_D_group)
+
+kable(descriptives_D_all, caption = "rmd-table 2: pre-post changes in sprint performance [sec]", digits = 3, align = "c")
+
+```
+### Difference between conditions in pre-post changes
+
+rmd_table 3 summarized basic descriptive indicators for the difference between conditions in pre-post changes. 
+
+Abbreviations: DD = Difference between conditions in pre-post changes, _5_ = initial 5m of 30m sprint, _30_ = 30m sprint, SD = standard deviation"
+
+```{r basic descriptives, eval=TRUE, echo=FALSE}
+# Reformating the dataset - CWI and control of the same repetition in the one row 
+data_wide <- pivot_wider(data, names_from = "Code", values_from = c(Condition, FivePre, FivePost, ThirtyPre, ThirtyPost, Diff_5_Sec, Diff_30_Sec))
+
+# Calculating the difference in pre-post changes between conditions 
+# (DD_5 and DD_30, respectively)
+data_wide <- mutate(data_wide, DD_5 = Diff_5_Sec_1 - Diff_5_Sec_0, DD_30 = Diff_30_Sec_1 - Diff_30_Sec_0)
+
+descriptives_DD <- summarize(data_wide, DD_5_mean = mean(DD_5), DD_5_SD = sd(DD_5), DD_30_mean = mean(DD_30), DD_30_SD = sd(DD_30))
+
+kable(descriptives_DD, digits = 3, align = "c", caption = "rmd-table 3: Difference in pre-post changes between conditions [sec]") 
+
+```
+
+# Efficacy of cold-water immersion on the group level 
+## Mixed model and p value for the fixed effect  
+
+A mixed model is fit to analyse the efficacy of cold-water immersion (difference between conditions for pre-post changes in performance) with the pre-post differences for the respective distance as the outcome, condition (CWI vs. control) as fixed effect and ID and condition-by-ID interaction, respectively, as random effects.
+
+Boxplots with individual datapoints are provided in figure 3a and b. p-Values refer the mixed model results.
+
+### Inital 5m
+
+```{r Pre-post changes 5m mixed model}
+# fitting the model
+model5 <- lmer(Diff_5_Sec ~ Code + (1|ID) + (Code|ID), data = data)
+
+# getting the summary
+summary(model5)
+```
+
+```{r Boxplot Pre-post 5m, eval=TRUE, echo=FALSE}
+ggplot(data, aes(x=Code, y=Diff_5_Sec)) + geom_boxplot(outlier.size = 0, outlier.color = NA) + geom_jitter(aes(x=Code, color=ID), width = 0.2)+ scale_fill_brewer(palette = "Set1")+ ggtitle("Figure 3a: Pre-post differences in initial 5m sprint time") + ylab("pre-post difference in initial 5 m [sec]") + xlab("Condition") + geom_hline(yintercept = 0, linetype = 5) + annotate("text", x = 1.5, y = 0.075, label = "p=0.004")
+```
+### 30m sprint 
+
+```{r Pre-post changes 30m mixed model}
+
+# fitting the model
+model30 <- lmer(Diff_30_Sec ~ Code + (1|ID) + (Code|ID), data = data)
+
+# getting the summary
+summary(model30)
+```
+
+
+```{r Boxplot pre-post 30m, eval=TRUE, echo=FALSE}
+ggplot(data, aes(x=Code, y=Diff_30_Sec)) + geom_boxplot(outlier.size = 0, outlier.color = NA) + geom_jitter(aes(x=Code, color=ID), width = 0.2)+ scale_fill_brewer(palette = "Set1")+ ggtitle("Figure 1b: Pre-post differences in 30 m sprint") + ylab("Pre-post difference in 30 m sprint [sec]") + xlab("Condition")+ annotate("text", x = 1.5, y = 0.275, label = "p=0.959") + geom_hline(yintercept = 0, linetype = 5)
+```
+## Frequentist confidence intervals for the difference between conditions
+
+Please compare above (code lines 110 and 124, respectively) for model definitions. 
+
+### 5m 
+
+
+```{r, confidence interval for effect of CWI - 5m}
+ConfInt_DD_5 <- contest(model5, L=c(0, 1), joint = FALSE, confint = TRUE, level = 0.95)
+ConfInt_DD_5$SD <- ConfInt_DD_5$`Std. Error`* sqrt(ConfInt_DD_5$df)
+kable(ConfInt_DD_5, digits = 3, align = "c", caption = "rmd-table 4: Difference in pre-post changes between conditions for 5m times - Mixed model results")
+```
+### 30m
+
+
+```{r, confidence interval for effect of CWI - 30m}
+ConfInt_DD_30 <- contest(model30, L=c(0, 1), joint = FALSE, confint = TRUE, level = 0.95)
+ConfInt_DD_30$SD <- ConfInt_DD_30$`Std. Error`* sqrt(ConfInt_DD_30$df)
+kable(ConfInt_DD_30, digits = 3, align = "c", caption = "rmd-table 5: Difference in pre-post changes between conditions for 30m times - Mixed model results")
+```
+## Association of difference between conditions for the two distances
+
+The efficacy of cold-water immersion (difference in pre-post changes between conditions) with respect to initial 5m time and the full 30m sprint is significantly correlated. 
+
+```{r association of efficacy between distances, eval=TRUE}
+# fit model
+model_DD <- lmer(formula = DD_30 ~ DD_5 + (1|ID), data = data_wide)
+
+# get summary
+summary(model_DD)
+
+```
+
+
+```{r scatter differences between conditions, eval=TRUE, echo=FALSE}
+ggplot(data_wide, aes(x=DD_5, y=DD_30, color = ID)) + geom_point() + scale_fill_brewer(palette = "Set1")+ ggtitle("Efficacy of CWI for 30m sprint and initial 5m time") + ylab("Difference between conditions: 30m sprint [sec]") + xlab("Difference between conditions: initial 5m [sec]") + annotate("text", x = -0.05, y = 0.2, label = "p<0.001") + geom_hline(yintercept = 0, linetype = 5) + geom_vline(xintercept = 0, linetype = 5)
+```
+
+## Bayesian Analysis - getting 95% credibale intervals for the difference between conditions
+
+Important note: The connection to stan and the required C++ compiler requires specific configuration, taking into account the computer system employed. As a consequence, this step of the analysis may be tricky to get running if stan is not routinely used. Therefore, by default the fit object resulting from the simulation is loaded from an rds.file. However, the original code is also provided and can be run after setting "eval" to "TRUE" in the respective code chunk headers and opening the stan files. The same applies to the diagnostic trace plots. Computing the traceplots is time consuming and they are not required for the analysis to proceed. Therefore "eval" is set to "FALSE" by default. 
+
+### Initial 5m - informative prior
+#### fit model
+
+```{r fit model for initial 5m with informative prior, eval=FALSE, include=TRUE}
+# Set dependent variable 
+y <- data$Diff_5_Sec
+
+# Estimate model as defined in the Stan file with standard settings for chains und iterations 
+fit5 <- stan(file = 'Stan_Five.stan', data = list(N = length(y), J = length(unique(data$ID)), y = y, x_cwi = data$Code, id = data$ID), pars = c('beta', 'sigma', 'alpha', 'sigma_alpha', 'omega', 'sigma_omega', 'inter', 'slope'), iter = 5000)
+```
+
+##### Fallback solution to get the fit5 object
+
+```{r open fallback fit5 object, eval=TRUE, echo=TRUE}
+fit5 <- readRDS("fit5.rds")
+
+```
+##### Optional diagnostics: traceplots
+
+```{r optional traceplots for fit5, eval=FALSE, echo=FALSE}
+traceplot(fit5, pars = c('alpha', 'sigma_alpha'))
+traceplot(fit5, pars = c('omega', 'sigma_omega'))
+```
+
+#### Generate summary of fit5
+
+```{r Summary fit5, eval=TRUE, echo=TRUE}
+# Generate summary 
+fit5_sum <- summary(fit5)
+fit5_sum <- as.data.frame(fit5_sum$summary)
+
+```
+
+### 30m - informative prior
+#### fit model
+
+```{r fit model for 30m with informative prior, eval=FALSE, echo=TRUE}
+# Set dependent variable 
+y <- data$Diff_30_Sec
+
+# Estimate model as defined in the Stan file with standard settings for chains und iterations 
+fit30 <- stan(file = 'Stan_Thirty.stan', data = list(N = length(y), J = length(unique(data$ID)), y = y, x_cwi = data$Code, id = data$ID), pars = c('beta', 'sigma', 'alpha', 'sigma_alpha', 'omega', 'sigma_omega', 'inter', 'slope'),iter = 5000)
+```
+
+##### Fallback solution to get the fit30 object
+
+```{r open fallback fit30 object, eval=TRUE, echo=TRUE}
+fit30 <- readRDS("fit30.rds")
+
+```
+##### Optional diagnostics: traceplots
+
+```{r optional traceplots for fit30, eval=FALSE, echo=FALSE}
+traceplot(fit30, pars = c('alpha', 'sigma_alpha'))
+traceplot(fit30, pars = c('omega', 'sigma_omega'))
+```
+
+#### Generate summary of fit30
+
+```{r Summary fit30, eval=TRUE, echo=TRUE}
+# Generate summary 
+fit30_sum <- summary(fit30)
+fit30_sum <- as.data.frame(fit30_sum$summary)
+
+```
+
+### Initial 5m - flat prior
+#### fit model 
+
+```{r fit model for initial 5m with flat prior, eval=FALSE, echo=TRUE}
+# Set dependent variable (here: Initial 5m sprint time in seconds)
+y <- data$Diff_5_Sec
+
+# Estimate model as defined in the Stan file with standard settings for chains und iterations 
+fit5_Flat <- stan(file = 'Stan_Five_Flat.stan', data = list(N = length(y), J =length(unique(data$ID)), y = y, x_cwi = data$Code, id = data$ID), pars = c('beta', 'sigma', 'alpha', 'sigma_alpha', 'omega', 'sigma_omega', 'inter', 'slope'),iter = 5000)
+```
+
+##### Fallback solution to get the fit5_Flat object
+
+```{r open fallback fit5_Flat object, eval=TRUE, echo=TRUE}
+fit5_Flat <- readRDS("fit5_Flat.rds")
+
+```
+##### Optional diagnostics: traceplots
+
+```{r optional traceplots for fit5_Flat, eval=FALSE, echo=FALSE}
+traceplot(fit5_Flat, pars = c('alpha', 'sigma_alpha'))
+traceplot(fit5_Flat, pars = c('omega', 'sigma_omega'))
+```
+
+#### Generate summary of fit5_Flat
+
+```{r Summary fit5_Flat, eval=TRUE, echo=TRUE}
+# Generate summary 
+fit5_Flat_sum <- summary(fit5_Flat)
+fit5_Flat_sum <- as.data.frame(fit5_Flat_sum$summary)
+
+```
+### 30m - flat prior
+#### fit model
+
+```{r fit model for 30m with flat prior, eval=FALSE, echo=TRUE}
+# Set dependent variable 
+y <- data$Diff_30_Sec
+
+# Estimate model as defined in the Stan file with standard settings for chains und iterations 
+fit30_Flat <- stan(file = 'Stan_Thirty_Flat.stan', data = list(N = length(y), J =length(unique(data$ID)), y = y, x_cwi = data$Code, id = data$ID), pars = c('beta', 'sigma', 'alpha', 'sigma_alpha', 'omega', 'sigma_omega', 'inter', 'slope'), iter = 5000)
+```
+
+##### Fallback solution to get the fit30_Flat object
+
+```{r open fallback fit30_Flat object, eval=TRUE, echo=TRUE}
+
+fit30_Flat <- readRDS("fit30_Flat.rds")
+
+```
+##### Optional diagnostics: traceplots
+
+```{r optional traceplots for fit30_Flat, eval=FALSE, echo=FALSE}
+traceplot(fit30_Flat, pars = c('alpha', 'sigma_alpha'))
+traceplot(fit30_Flat, pars = c('omega', 'sigma_omega'))
+```
+
+#### Generate summary of fit30_Flat
+
+```{r Summary fit30_Flat, eval=TRUE, echo=TRUE}
+# Generate summary 
+fit30_Flat_sum <- summary(fit30_Flat)
+fit30_Flat_sum <- as.data.frame(fit30_Flat_sum$summary)
+
+```
+
+## Compare results of analytical approaches for the fixed effect of cold-water immerssion
+### Generate  Figure 3a - Credible and confidence intervals - initial 5m
+#### Extract and combine credible intervals for fixed effect (Beta2)
+
+```{r Get fixed effect credible intervals for 5m, eval=TRUE, echo=FALSE}
+# Extract the slope fixed effect Beta[2]
+
+fit5_sum$Stat <- rownames(fit5_sum)
+fit5_sum$Distance <- "5"
+fit5_sum$Prior <- "Informative"
+fit5_sum$Code <- "e"
+fit5_CI <- filter(fit5_sum, Stat == "beta[2]")
+
+fit5_Flat_sum$Stat <- rownames(fit5_Flat_sum)
+fit5_Flat_sum$Distance <- "5"
+fit5_Flat_sum$Prior <- "Flat"
+fit5_Flat_sum$Code <- "c"
+fit5_Flat_CI <- filter(fit5_Flat_sum, Stat == "beta[2]")
+
+# Combine credible intervals for informative and flat prior, respectively
+
+ConfInt_5_Bayes <- rbind(fit5_CI, fit5_Flat_CI)
+colnames(ConfInt_5_Bayes) <- c("mean", "se", "sd", "lower", "a", "b", "c", "upper", "d", "e", "f", "Distance", "Prior", "Code")
+ConfInt_5_Bayes <- subset(ConfInt_5_Bayes, select = c(mean, lower, upper, Distance, Prior, Code))
+
+# Reformat for plotting
+
+ConfInt_5_Bayes_upper <- ConfInt_5_Bayes
+ConfInt_5_Bayes_upper$end <- "upper"
+ConfInt_5_Bayes_upper <- rename(ConfInt_5_Bayes_upper, m5 = upper)
+ConfInt_5_Bayes_upper <- subset(ConfInt_5_Bayes_upper, select = -c(lower))
+
+
+ConfInt_5_Bayes_lower <- ConfInt_5_Bayes 
+ConfInt_5_Bayes_lower$end <- "lower"
+ConfInt_5_Bayes_lower <- rename(ConfInt_5_Bayes_lower, m5 = lower)
+ConfInt_5_Bayes_lower <- subset(ConfInt_5_Bayes_lower, select = -c(upper))
+
+ConfInt_5_Bayes <- rbind(ConfInt_5_Bayes_lower, ConfInt_5_Bayes_upper)
+
+# Reformat frequentist CI
+
+ConfInt_5_Freq <- subset(ConfInt_DD_5, select=c(Estimate, lower, upper))
+colnames(ConfInt_5_Freq) <- c("mean", "lower", "upper")
+ConfInt_5_Freq$Distance <- "5"
+ConfInt_5_Freq$Prior <- "na"
+ConfInt_5_Freq$Code <- "a"
+
+ConfInt_5_Freq_upper <- ConfInt_5_Freq
+ConfInt_5_Freq_upper$end <- "upper"
+ConfInt_5_Freq_upper <- rename(ConfInt_5_Freq_upper, m5 = upper)
+ConfInt_5_Freq_upper <- subset(ConfInt_5_Freq_upper, select = -c(lower))
+
+ConfInt_5_Freq_lower <- ConfInt_5_Freq 
+ConfInt_5_Freq_lower$end <- "lower"
+ConfInt_5_Freq_lower <- rename(ConfInt_5_Freq_lower, m5 = lower)
+ConfInt_5_Freq_lower <- subset(ConfInt_5_Freq_lower, select = -c(upper))
+
+ConfInt_5_Frequentist <- rbind(ConfInt_5_Freq_lower, ConfInt_5_Freq_upper)
+
+# Combine Bayesian and frequentist intervals
+
+ConfInt_5 <- rbind(ConfInt_5_Frequentist, ConfInt_5_Bayes)
+
+
+```
+
+#### figure 3a - inital 5m time
+
+Legend: dotted line: data mean, dashed line: informative prior
+
+```{r fig3a, eval=TRUE, echo=FALSE}
+ggplot(ConfInt_5, aes(x=m5, y=Code)) + geom_line() + geom_vline(xintercept = -0.049, linetype = 5) + geom_vline(xintercept = - 0.06, linetype = 3) + geom_vline(xintercept=0) + coord_cartesian(xlim = c(-0.15, 0.01)) + ggtitle("95% confidence or credible intervals") + ylab("Approach") + xlab("Difference between conditions: Initial 5m sprint time [sec]") + geom_point(aes(x=mean, y=Code)) + scale_y_discrete(labels=c("a" = "Frequentist", "c" = "Bayesian, diffuse prior", "e" = "Bayesian, informative prior"))
+
+```
+
+### Generate  Figure 3b - Credible and confidence intervals - 30m sprint
+#### Extract and combine credible intervals for fixed effect 
+
+```{r get fixed effect credible intervals - 30m, eval=TRUE, echo=FALSE}
+# Extract the slope fixed effect Beta[2]
+
+fit30_sum$Stat <- rownames(fit30_sum)
+fit30_sum$Distance <- "30"
+fit30_sum$Prior <- "Informative"
+fit30_sum$Code <- "e"
+fit30_CI <- filter(fit30_sum, Stat == "beta[2]")
+
+fit30_Flat_sum$Stat <- rownames(fit30_Flat_sum)
+fit30_Flat_sum$Distance <- "30"
+fit30_Flat_sum$Prior <- "Flat"
+fit30_Flat_sum$Code <- "c"
+fit30_Flat_CI <- filter(fit30_Flat_sum, Stat == "beta[2]")
+
+# Combine credible intervals for informative and flat prior, respectively
+
+ConfInt_30_Bayes <- rbind(fit30_CI, fit30_Flat_CI)
+colnames(ConfInt_30_Bayes) <- c("mean", "se", "sd", "lower", "a", "b", "c", "upper", "d", "e", "f", "Distance", "Prior", "Code")
+ConfInt_30_Bayes <- subset(ConfInt_30_Bayes, select = c(mean, lower, upper, Distance, Prior, Code))
+
+# Reformat for plotting
+
+ConfInt_30_Bayes_upper <- ConfInt_30_Bayes
+ConfInt_30_Bayes_upper$end <- "upper"
+ConfInt_30_Bayes_upper <- rename(ConfInt_30_Bayes_upper, m30 = upper)
+ConfInt_30_Bayes_upper <- subset(ConfInt_30_Bayes_upper, select = -c(lower))
+
+ConfInt_30_Bayes_lower <- ConfInt_30_Bayes 
+ConfInt_30_Bayes_lower$end <- "lower"
+ConfInt_30_Bayes_lower <- rename(ConfInt_30_Bayes_lower, m30 = lower)
+ConfInt_30_Bayes_lower <- subset(ConfInt_30_Bayes_lower, select = -c(upper))
+
+ConfInt_30_Bayes <- rbind(ConfInt_30_Bayes_lower, ConfInt_30_Bayes_upper)
+
+# Reformat frequentist confidence intervals
+
+ConfInt_30_Freq <- subset(ConfInt_DD_30, select=c(Estimate, lower, upper))
+colnames(ConfInt_30_Freq) <- c("mean", "lower", "upper")
+ConfInt_30_Freq$Distance <- "30"
+ConfInt_30_Freq$Prior <- "na"
+ConfInt_30_Freq$Code <- "a"
+
+ConfInt_30_Freq_upper <- ConfInt_30_Freq
+ConfInt_30_Freq_upper$end <- "upper"
+ConfInt_30_Freq_upper <- rename(ConfInt_30_Freq_upper, m30 = upper)
+ConfInt_30_Freq_upper <- subset(ConfInt_30_Freq_upper, select = -c(lower))
+
+ConfInt_30_Freq_lower <- ConfInt_30_Freq 
+ConfInt_30_Freq_lower$end <- "lower"
+ConfInt_30_Freq_lower <- rename(ConfInt_30_Freq_lower, m30 = lower)
+ConfInt_30_Freq_lower <- subset(ConfInt_30_Freq_lower, select = -c(upper))
+
+ConfInt_30_Frequentist <- rbind(ConfInt_30_Freq_lower, ConfInt_30_Freq_upper)
+
+# Combine Bayesian and frequentist
+
+ConfInt_30 <- rbind(ConfInt_30_Frequentist, ConfInt_30_Bayes)
+
+```
+
+#### figure 3b - Credible and confidence intervals for 30m sprint 
+
+dotted line: data mean, dashed line: informative prior
+
+```{r figure 3b, eval=TRUE, echo=FALSE}
+ggplot(ConfInt_30, aes(x=m30, y=Code)) + geom_line() + geom_vline(xintercept = -0.208, linetype = 5) + geom_vline(xintercept = 0.00226, linetype = 3) + geom_vline(xintercept=0) + coord_cartesian(xlim = c(-0.25, 0.15)) + ggtitle("95% confidence or credible intervals") + ylab("Approach") + xlab("Difference between conditions: 30 m sprint [sec]") + geom_point(aes(x=mean, y=Code)) + scale_y_discrete(labels=c("a" = "Frequentist", "c" = "Bayesian, diffuse prior", "e" = "Bayesian, informative prior"))
+```
+
+
+# Results on the individual level
+## Initial 5m 
+### Generate individual posterior distributions
+
+```{r individual credible intervals - 5m, eval=TRUE, echo=FALSE}
+# extract fit5
+la <- extract(fit5, permuted = TRUE)
+
+# Simulate individual slopes 
+dens_slope1 <- density(la$slope[,1])
+dens_slope2 <- density(la$slope[,2])
+dens_slope3 <- density(la$slope[,3])
+dens_slope4 <- density(la$slope[,4])
+dens_slope5 <- density(la$slope[,5])
+dens_slope6 <- density(la$slope[,6])
+dens_slope7 <- density(la$slope[,7])
+
+plot_ly() %>% 
+  add_lines(x = dens_slope1$x, y = dens_slope1$y, name = 'id1') %>% 
+  add_lines(x = dens_slope2$x, y = dens_slope2$y, name = 'id2') %>% 
+  add_lines(x = dens_slope3$x, y = dens_slope3$y, name = 'id3') %>% 
+  add_lines(x = dens_slope4$x, y = dens_slope4$y, name = 'id4') %>% 
+  add_lines(x = dens_slope5$x, y = dens_slope5$y, name = 'id5') %>% 
+  add_lines(x = dens_slope6$x, y = dens_slope6$y, name = 'id6') %>% 
+  add_lines(x = dens_slope7$x, y = dens_slope7$y, name = 'id7') 
+
+quantile_levels <- function(q, x){
+  
+  quantiles <- NULL
+  
+  for(i in 1:length(q)){
+    
+    quantiles <- c(quantiles, quantile(x, q[i]))
+    
+  }
+  
+  return(quantiles)
+}
+
+```
+
+### Generate credible intervals for the individual slopes (95% HPDI)
+
+```{r Generate HPDI for individual slopes 5m, eval=TRUE, echo=FALSE}
+
+hpdi5 <- apply(la$slope, 2, quantile_levels, q = c(0.025, 0.975))
+hpdi5 <- as.data.frame(t(hpdi5))
+hpdi5$ID <- rownames(hpdi5)
+hpdi5$Approach <- "Bayes"
+colnames(hpdi5) <- c("lower", "upper", "ID", "Approach")
+```
+
+
+### Calculate frequentist confidence intervals 
+
+```{r Individual confidence intervals - 5m, eval=TRUE, echo=FALSE}
+
+## LM for each individual
+### Player #1
+data1 <- data %>% filter(ID == 1) 
+model5_1 <- lm(Diff_5_Sec ~ Code, data = data1) 
+CI5_1 <- confint(model5_1, "Code1", level=0.95)
+CI5_1 <- as.data.frame(CI5_1)
+CI5_1$ID <- "1"
+CI5_1$Approach <- "Frequ"
+
+### Player #2
+data2 <- data %>% filter(ID == 2) %>% subset(select = c("Diff_5_Sec", "Diff_30_Sec", "ID", "Code"))
+model5_2 <- lm(Diff_5_Sec ~ Code, data = data2)
+CI5_2 <- confint(model5_2, "Code1", level=0.95)
+CI5_2 <- as.data.frame(CI5_2)
+CI5_2$ID <- "2"
+CI5_2$Approach <- "Frequ"
+
+### Player #3
+data3 <- data %>% filter(ID == 3) %>% subset(select = c("Diff_5_Sec", "Diff_30_Sec", "ID", "Code"))
+model5_3 <- lm(Diff_5_Sec ~ Code, data = data3)
+CI5_3 <- confint(model5_3, "Code1", level=0.95)
+CI5_3 <- as.data.frame(CI5_3)
+CI5_3$ID <- "3"
+CI5_3$Approach <- "Frequ"
+
+### Player #4
+data4 <- data %>% filter(ID == 4) %>% subset(select = c("Diff_5_Sec", "Diff_30_Sec", "ID", "Code"))
+model5_4 <- lm(Diff_5_Sec ~ Code, data = data4)
+CI5_4 <- confint(model5_4, "Code1", level=0.95)
+CI5_4 <- as.data.frame(CI5_4)
+CI5_4$ID <- "4"
+CI5_4$Approach <- "Frequ"
+
+### Player #5
+data5 <- data %>% filter(ID == 5) %>% subset(select = c("Diff_5_Sec", "Diff_30_Sec", "ID", "Code"))
+model5_5 <- lm(Diff_5_Sec ~ Code, data = data5)
+CI5_5 <- confint(model5_5, "Code1", level=0.95)
+CI5_5 <- as.data.frame(CI5_5)
+CI5_5$ID <- "5"
+CI5_5$Approach <- "Frequ"
+
+### Player #6
+data6 <- data %>% filter(ID == 6) %>% subset(select = c("Diff_5_Sec", "Diff_30_Sec", "ID", "Code"))
+model5_6 <- lm(Diff_5_Sec ~ Code, data = data6)
+CI5_6 <- confint(model5_6, "Code1", level=0.95)
+CI5_6 <- as.data.frame(CI5_6)
+CI5_6$ID <- "6"
+CI5_6$Approach <- "Frequ"
+
+### Player #7
+data7 <- data %>% filter(ID == 7) %>% subset(select = c("Diff_5_Sec", "Diff_30_Sec", "ID", "Code"))
+model5_7 <- lm(Diff_5_Sec ~ Code, data = data7)
+CI5_7 <- confint(model5_7, "Code1", level=0.95)
+CI5_7 <- as.data.frame(CI5_7)
+CI5_7$ID <- "7"
+CI5_7$Approach <- "Frequ"
+
+IndCI_5 <- rbind(CI5_1, CI5_2, CI5_3, CI5_4, CI5_5, CI5_6, CI5_7)
+names(IndCI_5) <- c("lower", "upper", "ID", "Approach")
+
+
+## with SE for the fixed effect from the mixed model in code line 104
+IndCI_5MM <- data_wide %>% group_by(ID) %>% summarize(Indmean = mean(DD_5))
+IndCI_5MM$lower <- IndCI_5MM$Indmean - 1.96*0.0173 
+IndCI_5MM$upper <- IndCI_5MM$Indmean + 1.96*0.0173 
+IndCI_5MM$Approach <- "FrequMM"
+IndCI_5MM <- subset(IndCI_5MM, select = c("lower", "upper", "ID", "Approach"))
+
+
+
+```
+
+
+### Merge and prepare for plotting
+
+```{r merge and wrangle 5, eval=TRUE, echo=FALSE}
+# Combine with individual credible interval limits in one table
+Fig4_5 <- rbind(IndCI_5, IndCI_5MM, hpdi5)
+Fig4_5l <- Fig4_5 %>% subset(select = c("lower", "ID", "Approach")) %>% rename(CI_lim = lower) 
+Fig4_5u <- Fig4_5 %>% subset(select= c("upper", "ID", "Approach")) %>% rename(CI_lim = upper)
+Fig4_5 <- rbind(Fig4_5l, Fig4_5u)
+Fig4_5 <- unite(Fig4_5, col = ID_Plot, as.character("ID"), as.character("Approach"), sep = " ", remove = FALSE)
+
+
+# Observations from replication 1 and 2, respectively 
+dot_5 <- subset(data_wide, select = c("DD_5", "ID"))
+dot_5$ID_dots <- as.numeric(dot_5$ID)*3-1 
+dot_5b <- dot_5
+dot_5 <- rbind(dot_5, dot_5b)
+
+Fig4_5 <- merge(Fig4_5, dot_5)
+
+## Generate positioning variable for nice plotting
+Fig4_5$ID_Plot_new <- case_when(
+  Fig4_5$ID_Plot == "1 Bayes" ~ "1",
+  Fig4_5$ID_Plot == "1 Frequ" ~ "2.5",
+  Fig4_5$ID_Plot == "1 FrequMM" ~ "3",
+  Fig4_5$ID_Plot == "2 Bayes" ~ "4",
+  Fig4_5$ID_Plot == "2 Frequ" ~ "5.5",
+  Fig4_5$ID_Plot == "2 FrequMM" ~ "6",
+  Fig4_5$ID_Plot == "3 Bayes" ~ "7",
+  Fig4_5$ID_Plot == "3 Frequ" ~ "8.5",
+  Fig4_5$ID_Plot == "3 FrequMM" ~ "9",
+  Fig4_5$ID_Plot == "4 Bayes" ~ "10",
+  Fig4_5$ID_Plot == "4 Frequ" ~ "11.5",
+  Fig4_5$ID_Plot == "4 FrequMM" ~ "12",
+  Fig4_5$ID_Plot == "5 Bayes" ~ "13",
+  Fig4_5$ID_Plot == "5 Frequ" ~ "14.5",
+  Fig4_5$ID_Plot == "5 FrequMM" ~ "15",
+  Fig4_5$ID_Plot == "6 Bayes" ~ "16",
+  Fig4_5$ID_Plot == "6 Frequ" ~ "17.5",
+  Fig4_5$ID_Plot == "6 FrequMM" ~ "18",
+  Fig4_5$ID_Plot == "7 Bayes" ~ "19",
+  Fig4_5$ID_Plot == "7 Frequ" ~ "20.5",
+  Fig4_5$ID_Plot == "7 FrequMM" ~ "21",
+
+      TRUE ~ "nein"
+)
+
+Fig4_5$ID_Plot_new <- as.numeric(Fig4_5$ID_Plot_new)
+
+```
+
+
+### Display intervals for individual players in figure 4a
+
+Dots represent the differences in pre-post changes between conditions for the two replications realized by the respective individual.
+
+Dashed horizontal lines above the dots represent (frequentist) 95% confidence intervals. The lower dashed line is based exclusively on data from the respective individual (linear model fit to the pre-post differences of the respective individual, cp. code above and methods section). For comparison, the upper dashed line considers the (group-based) standard error for the fixed effect of cold-water immersion from the mixed model in code line 118 (individual mean +- 1.96 * standard error of the fixed effect)
+
+Bayesian 95% credible intervals are displayed as solid lines below the dots. 
+
+dotted vertical line: data mean, dashed vertical line: informative prior
+
+```{r figure 4a, eval=TRUE, echo=FALSE}
+ggplot(Fig4_5, aes(x=CI_lim, y=ID_Plot_new, color=ID, linetype=Approach)) + geom_line(size = 1.2) + scale_fill_brewer(palette="Set1") + geom_point(aes(x=DD_5, y=(ID_dots))) + coord_cartesian(xlim = c(-0.4, 0.3)) + geom_vline(xintercept = 0) + geom_vline(xintercept = -0.06, linetype = 3) + ggtitle("Initial 5 m") + ylab("Approach") + xlab("Difference between conditions [sec]") + geom_vline(xintercept = -0.049, linetype = 5) + theme_classic() + theme(axis.title.y = element_blank()) + theme (axis.text.y = element_blank()) 
+```
+
+## 30m sprint
+### Generate individual posterior distributions
+
+```{r individual credible intervals - 30m, eval=TRUE, echo=FALSE}
+la30 <- extract(fit30, permuted = TRUE)
+
+# Simulate individual slopes 
+dens_slope1 <- density(la30$slope[,1])
+dens_slope2 <- density(la30$slope[,2])
+dens_slope3 <- density(la30$slope[,3])
+dens_slope4 <- density(la30$slope[,4])
+dens_slope5 <- density(la30$slope[,5])
+dens_slope6 <- density(la30$slope[,6])
+dens_slope7 <- density(la30$slope[,7])
+
+plot_ly() %>% 
+  add_lines(x = dens_slope1$x, y = dens_slope1$y, name = 'id1') %>% 
+  add_lines(x = dens_slope2$x, y = dens_slope2$y, name = 'id2') %>% 
+  add_lines(x = dens_slope3$x, y = dens_slope3$y, name = 'id3') %>% 
+  add_lines(x = dens_slope4$x, y = dens_slope4$y, name = 'id4') %>% 
+  add_lines(x = dens_slope5$x, y = dens_slope5$y, name = 'id5') %>% 
+  add_lines(x = dens_slope6$x, y = dens_slope6$y, name = 'id6') %>% 
+  add_lines(x = dens_slope7$x, y = dens_slope7$y, name = 'id7') 
+
+quantile_levels <- function(q, x){
+  
+  quantiles <- NULL
+  
+  for(i in 1:length(q)){
+    
+    quantiles <- c(quantiles, quantile(x, q[i]))
+    
+  }
+  
+  return(quantiles)
+}
+
+```
+
+### Generate credible intervals for the individual slopes (95% HPDI)
+
+```{r HPDI for individual slopes, eval=TRUE, echo=FALSE}
+
+hpdi30 <- apply(la30$slope, 2, quantile_levels, q = c(0.025, 0.975))
+hpdi30 <- as.data.frame(t(hpdi30))
+hpdi30$ID <- rownames(hpdi30)
+hpdi30$Approach <- "Bayes"
+colnames(hpdi30) <- c("lower", "upper", "ID", "Approach")
+
+```
+
+### Calculate frequentist confidence intervals 
+
+```{r individual confidence intervals - 30m, eval=TRUE, echo=FALSE}
+
+## LM for each individual
+### Player #1
+data1 <- data %>% filter(ID == 1) 
+model30_1 <- lm(Diff_30_Sec ~ Code, data = data1) 
+CI30_1 <- confint(model30_1, "Code1", level=0.95)
+CI30_1 <- as.data.frame(CI30_1)
+CI30_1$ID <- "1"
+CI30_1$Approach <- "Frequ"
+
+### Player #2
+data2 <- data %>% filter(ID == 2) 
+model30_2 <- lm(Diff_30_Sec ~ Code, data = data2)
+CI30_2 <- confint(model30_2, "Code1", level=0.95)
+CI30_2 <- as.data.frame(CI30_2)
+CI30_2$ID <- "2"
+CI30_2$Approach <- "Frequ"
+
+### Player #3
+data3 <- data %>% filter(ID == 3) 
+model30_3 <- lm(Diff_30_Sec ~ Code, data = data3)
+CI30_3 <- confint(model30_3, "Code1", level=0.95)
+CI30_3 <- as.data.frame(CI30_3)
+CI30_3$ID <- "3"
+CI30_3$Approach <- "Frequ"
+
+### Player #4
+data4 <- data %>% filter(ID == 4) 
+model30_4 <- lm(Diff_30_Sec ~ Code, data = data4)
+CI30_4 <- confint(model30_4, "Code1", level=0.95)
+CI30_4 <- as.data.frame(CI30_4)
+CI30_4$ID <- "4"
+CI30_4$Approach <- "Frequ"
+
+### Player #5
+data5 <- data %>% filter(ID == 5) 
+model30_5 <- lm(Diff_30_Sec ~ Code, data = data5)
+CI30_5 <- confint(model30_5, "Code1", level=0.95)
+CI30_5 <- as.data.frame(CI30_5)
+CI30_5$ID <- "5"
+CI30_5$Approach <- "Frequ"
+
+### Player #6
+data6 <- data %>% filter(ID == 6) 
+model30_6 <- lm(Diff_30_Sec ~ Code, data = data6)
+CI30_6 <- confint(model30_6, "Code1", level=0.95)
+CI30_6 <- as.data.frame(CI30_6)
+CI30_6$ID <- "6"
+CI30_6$Approach <- "Frequ"
+
+### Player #7
+data7 <- data %>% filter(ID == 7) 
+model30_7 <- lm(Diff_30_Sec ~ Code, data = data7)
+CI30_7 <- confint(model30_7, "Code1", level=0.95)
+CI30_7 <- as.data.frame(CI30_7)
+CI30_7$ID <- "7"
+CI30_7$Approach <- "Frequ"
+
+IndCI_30 <- rbind(CI30_1, CI30_2, CI30_3, CI30_4, CI30_5, CI30_6, CI30_7)
+names(IndCI_30) <- c("lower", "upper", "ID", "Approach")
+
+
+## with SE for the fixed effect from the mixed model in code line 118
+IndCI_30MM <- data_wide %>% group_by(ID) %>% summarize(Indmean = mean(DD_30))
+IndCI_30MM$lower <- IndCI_30MM$Indmean - 1.96*0.0429 
+IndCI_30MM$upper <- IndCI_30MM$Indmean + 1.96*0.0429 
+IndCI_30MM$Approach <- "FrequMM"
+IndCI_30MM <- subset(IndCI_30MM, select = c("lower", "upper", "ID", "Approach"))
+
+
+```
+
+### Merge and prepare for plotting
+
+```{r merge and prepare 30m, eval=TRUE, echo=FALSE}
+# Combine with individual credible interval limits in one table
+Fig4_30 <- rbind(IndCI_30, IndCI_30MM, hpdi30)
+Fig4_30l <- Fig4_30 %>% subset(select = c("lower", "ID", "Approach")) %>% rename(CI_lim = lower) 
+Fig4_30u <- Fig4_30 %>% subset(select= c("upper", "ID", "Approach")) %>% rename(CI_lim = upper)
+Fig4_30 <- rbind(Fig4_30l, Fig4_30u)
+Fig4_30 <- unite(Fig4_30, col = ID_Plot, as.character("ID"), as.character("Approach"), sep = " ", remove = FALSE)
+
+# Observations from replication 1 and 2, respectively 
+dot_30 <- subset(data_wide, select = c("DD_30", "ID"))
+dot_30$ID_dots <- as.numeric(dot_30$ID)*3-1 
+dot_30b <- dot_30
+dot_30 <- rbind(dot_30, dot_30b)
+
+Fig4_30 <- merge(Fig4_30, dot_30)
+
+## Generate positioning variable for nice plotting
+Fig4_30$ID_Plot_new <- case_when(
+  Fig4_30$ID_Plot == "1 Bayes" ~ "1.5",
+  Fig4_30$ID_Plot == "1 Frequ" ~ "2.5",
+  Fig4_30$ID_Plot == "1 FrequMM" ~ "3",
+  Fig4_30$ID_Plot == "2 Bayes" ~ "4.5",
+  Fig4_30$ID_Plot == "2 Frequ" ~ "5.5",
+  Fig4_30$ID_Plot == "2 FrequMM" ~ "6",
+  Fig4_30$ID_Plot == "3 Bayes" ~ "7.5",
+  Fig4_30$ID_Plot == "3 Frequ" ~ "8.5",
+  Fig4_30$ID_Plot == "3 FrequMM" ~ "9",
+  Fig4_30$ID_Plot == "4 Bayes" ~ "10.5",
+  Fig4_30$ID_Plot == "4 Frequ" ~ "11.5",
+  Fig4_30$ID_Plot == "4 FrequMM" ~ "12",
+  Fig4_30$ID_Plot == "5 Bayes" ~ "13.5",
+  Fig4_30$ID_Plot == "5 Frequ" ~ "14.5",
+  Fig4_30$ID_Plot == "5 FrequMM" ~ "15",
+  Fig4_30$ID_Plot == "6 Bayes" ~ "16.5",
+  Fig4_30$ID_Plot == "6 Frequ" ~ "17.5",
+  Fig4_30$ID_Plot == "6 FrequMM" ~ "18",
+  Fig4_30$ID_Plot == "7 Bayes" ~ "19.5",
+  Fig4_30$ID_Plot == "7 Frequ" ~ "20.5",
+  Fig4_30$ID_Plot == "7 FrequMM" ~ "21",
+
+      TRUE ~ "nein"
+)
+
+Fig4_30$ID_Plot_new <- as.numeric(Fig4_30$ID_Plot_new)
+
+```
+
+
+### Display intervals for individual players in figure 4b
+
+Dots represent the differences in pre-post changes between conditions for the two replications realized by the respective individual.
+
+Dashed horizontal lines above the dots represent (frequentist) 95% confidence intervals. The lower dashed line is based exclusively on data from the respective individual (linear model fit to the pre-post differences of the respective individual, cp. code above and methods section). For comparison, the upper dashed line considers the (group-based) standard error for the fixed effect of cold-water immersion from the mixed model in code line 118 (individual mean +- 1.96 * standard error of the fixed effect)
+
+Bayesian 95% credible intervals are displayed as solid lines below the dots. 
+
+dotted vertical line: data mean, dashed vertical line: informative prior
+
+```{r figure 4b, eval=TRUE, echo=FALSE}
+ggplot(Fig4_30, aes(x=CI_lim, y=ID_Plot_new, color=ID, linetype=Approach)) + geom_line(size = 1.2) + scale_fill_brewer(palette="Set1") + geom_point(aes(x=DD_30, y=(ID_dots))) + coord_cartesian(xlim = c(-0.7, 0.5)) + geom_vline(xintercept = 0) + geom_vline(xintercept = -0.01619, linetype = 3) + ggtitle("30 m sprint") + ylab("Approach") + xlab("Difference between conditions [sec]") + geom_vline(xintercept = -0.208, linetype = 5) + theme_classic() + theme(axis.title.y = element_blank()) + theme (axis.text.y = element_blank())
+
+```
+
+
+
